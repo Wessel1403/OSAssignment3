@@ -26,6 +26,14 @@ static ITEM buffer[BUFFER_SIZE];
 static void rsleep (int t);	    // already implemented (see below)
 static ITEM get_next_item (void);   // already implemented (see below)
 
+static int buffer_count = 0; // Number of items in buffer
+static int next_expected_item = 0; // The item that is expected in buffer
+
+// Mutex and condition variables for critical section and buffer
+static pthread_mutex_t buffer_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t buffer_not_full = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t buffer_not_empty = PTHREAD_COND_INITIALIZER;
+
 
 /* producer thread */
 static void * 
@@ -35,6 +43,12 @@ producer (void * arg)
     {
         // TODO: 
         // * get the new item
+		ITEM item = get_next_item();
+		
+		// Check if all items have been produced
+        if (item == NROF_ITEMS) {
+            break; 
+        }
 		
         rsleep (100);	// simulating all kind of activities...
 		
@@ -43,13 +57,34 @@ producer (void * arg)
 	//
         // follow this pseudocode (according to the ConditionSynchronization lecture):
         //      mutex-lock;
-        //      while not condition-for-this-producer
+		//      while not condition-for-this-producer
         //          wait-cv;
         //      critical-section;
         //      possible-cv-signals;
         //      mutex-unlock;
         //
         // (see condition_test() in condition_basics.c how to use condition variables)
+		
+		// Mutex-lock
+		pthread_mutex_lock(&buffer_mutex);
+		printf("Prod: Mutex locked\n");
+
+		// While buffer is full and doesn't fit next expected item wait for buffer to have space
+		while(buffer_count == BUFFER_SIZE || item != (next_expected_item + buffer_count)){
+			printf("Prod: waiting with item %d, next expected %d, buffer_c %d\n", item, next_expected_item, buffer_count);
+			pthread_cond_wait(&buffer_not_full, &buffer_mutex);
+		}
+
+		// Critical section: place the item in the buffer
+        buffer[buffer_count] = item;
+		printf("Producer: Adding item %d to buffer at position %d\n", item, buffer_count);
+		buffer_count++;
+
+        // Signal the consumer that the buffer is not empty
+        pthread_cond_signal(&buffer_not_empty);
+
+		// Mutex-unlock
+        pthread_mutex_unlock(&buffer_mutex);
     }
 	return (NULL);
 }
@@ -71,8 +106,34 @@ consumer (void * arg)
         //      critical-section;
         //      possible-cv-signals;
         //      mutex-unlock;
+
+		// Mutex-lock
+		pthread_mutex_lock(&buffer_mutex);
+
+		// Wait while buffer empty or next item is not expected
+        while (buffer_count == 0 || buffer[0] != next_expected_item) {
+			printf("Consumer: Waiting for item %d\n", next_expected_item);
+            pthread_cond_wait(&buffer_not_empty, &buffer_mutex);
+        }
+
+		// Retrieve the item from the buffer and replace buffer items
+        ITEM item = buffer[0];
+        for (int i = 1; i < buffer_count; i++) {
+            buffer[i - 1] = buffer[i];
+        }
+        buffer_count--;
+		printf("Consumer: retrieved item %d\n", item);
+		next_expected_item++;
+
+		// Signal producers that buffer has room
+        pthread_cond_signal(&buffer_not_full);
+
+		// Mutex-unlock
+        pthread_mutex_unlock(&buffer_mutex);
 		
+		// Handle item
         rsleep (100);		// simulating all kind of activities...
+		printf("%d\n", item);
     }
 	return (NULL);
 }
@@ -81,7 +142,30 @@ int main (void)
 {
     // TODO: 
     // * startup the producer threads and the consumer thread
-    // * wait until all threads are finished  
+	pthread_t producers[NROF_PRODUCERS]; // Array to hold thread IDs
+
+    // Create threads
+    for (int i = 0; i < NROF_PRODUCERS; i++) {
+      // Create threads executing manage_light, and pass lane information
+      if (pthread_create(&producers[i], NULL, producer, NULL) != 0) {
+        perror("Failed to create thread");
+        exit(EXIT_FAILURE);
+      }
+    }
+
+	pthread_t consumer_id;
+    if (pthread_create(&consumer_id, NULL, consumer, NULL) != 0) {
+    	perror("Failed to create thread");
+        exit(EXIT_FAILURE);
+    }
+
+    // Wait for threads to finish
+    for (int i = 0; i < NROF_PRODUCERS; i++) {
+        pthread_join(producers[i], NULL);
+    }
+
+	pthread_join(consumer_id, NULL);
+    printf("All producer threads have finished.\n");
     
     return (0);
 }
