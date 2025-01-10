@@ -39,6 +39,8 @@ static pthread_cond_t buffer_not_empty = PTHREAD_COND_INITIALIZER;
 static void * 
 producer (void * arg)
 {
+	(void)arg;
+
     while (true /* TODO: not all items produced */)
     {
         // TODO: 
@@ -67,17 +69,14 @@ producer (void * arg)
 		
 		// Mutex-lock
 		pthread_mutex_lock(&buffer_mutex);
-		printf("Prod: Mutex locked\n");
 
 		// While buffer is full and doesn't fit next expected item wait for buffer to have space
 		while(buffer_count == BUFFER_SIZE || item != (next_expected_item + buffer_count)){
-			printf("Prod: waiting with item %d, next expected %d, buffer_c %d\n", item, next_expected_item, buffer_count);
 			pthread_cond_wait(&buffer_not_full, &buffer_mutex);
 		}
 
 		// Critical section: place the item in the buffer
         buffer[buffer_count] = item;
-		printf("Producer: Adding item %d to buffer at position %d\n", item, buffer_count);
 		buffer_count++;
 
         // Signal the consumer that the buffer is not empty
@@ -93,6 +92,8 @@ producer (void * arg)
 static void * 
 consumer (void * arg)
 {
+	(void)arg;
+	
     while (true /* TODO: not all items retrieved from buffer[] */)
     {
         // TODO: 
@@ -112,7 +113,6 @@ consumer (void * arg)
 
 		// Wait while buffer empty or next item is not expected
         while (buffer_count == 0 || buffer[0] != next_expected_item) {
-			printf("Consumer: Waiting for item %d\n", next_expected_item);
             pthread_cond_wait(&buffer_not_empty, &buffer_mutex);
         }
 
@@ -122,11 +122,10 @@ consumer (void * arg)
             buffer[i - 1] = buffer[i];
         }
         buffer_count--;
-		printf("Consumer: retrieved item %d\n", item);
 		next_expected_item++;
 
 		// Signal producers that buffer has room
-        pthread_cond_signal(&buffer_not_full);
+        pthread_cond_broadcast(&buffer_not_full);
 
 		// Mutex-unlock
         pthread_mutex_unlock(&buffer_mutex);
@@ -134,6 +133,10 @@ consumer (void * arg)
 		// Handle item
         rsleep (100);		// simulating all kind of activities...
 		printf("%d\n", item);
+
+		if(item == NROF_ITEMS - 1){
+			break;
+		}
     }
 	return (NULL);
 }
@@ -159,13 +162,12 @@ int main (void)
         exit(EXIT_FAILURE);
     }
 
+	pthread_join(consumer_id, NULL);
+
     // Wait for threads to finish
     for (int i = 0; i < NROF_PRODUCERS; i++) {
         pthread_join(producers[i], NULL);
     }
-
-	pthread_join(consumer_id, NULL);
-    printf("All producer threads have finished.\n");
     
     return (0);
 }
